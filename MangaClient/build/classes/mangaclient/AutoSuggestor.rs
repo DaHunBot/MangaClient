@@ -1,0 +1,4 @@
+mangaclient.SuggestionLabel$2
+mangaclient.SuggestionLabel$1
+mangaclient.AutoSuggestor
+mangaclient.SuggestionLabel
