@@ -7,6 +7,8 @@ import java.awt.Dimension;
 import java.awt.GradientPaint;
 import java.awt.Graphics;
 import java.awt.Graphics2D;
+import java.awt.GraphicsDevice;
+import java.awt.GraphicsEnvironment;
 import java.awt.Insets;
 import java.awt.RenderingHints;
 import java.awt.Toolkit;
@@ -49,6 +51,9 @@ public class MangaGui extends JFrame {
     private JComboBox<String> pageSel;
     private JComboBox<String> engineSel;
 
+    private JButton toggleFullScreen;
+    private boolean fullScreen = false;
+
     //Store manga APIs
     private LinkedHashMap<String, MorEngine> mangaEngineMap = new LinkedHashMap<>();
 
@@ -56,7 +61,7 @@ public class MangaGui extends JFrame {
     private HashMap<KeyStroke, Action> actionMap = new HashMap<KeyStroke, Action>();
 
     private static final String instructions = "<html><center>"
-            + "<p><font size =\"32\">Under Development... Currently broken since sites are down"
+            + "<p><font size =\"32\">Use the Toolbar at the top to search for the manga you want to view. You can also use the side buttons to pick what chapters and page to view"
             + "<font size =\"32\"></p>" + "</center></html>";
 
     /**
@@ -114,15 +119,16 @@ public class MangaGui extends JFrame {
                 try {
                     //Loading MangaHereAPI
                     mangaEngineMap.put("MangaHere", new MangaHereAPI());
-                } catch (IOException ex) {
+                } catch (Exception ex) {
+                    catcher(ex);
+
                     catcher(ex);
                 }
 
                 try {
                     //Loading MangaReaderAPI
                     mangaEngineMap.put("MangaReader", new MangaReaderAPI());
-                } catch (IOException ex) {
-                    catcher(ex);
+                } catch (Exception ex) {
                 }
 
                 if (engineLoadingFailed) {
@@ -260,6 +266,16 @@ public class MangaGui extends JFrame {
                 }
             }
         });
+        toggleFullScreen = new JButton("F");
+        toggleFullScreen.setToolTipText("Toggles FullScreen (CTRL-F)");
+        toggleFullScreen.setForeground(Color.WHITE);
+        toggleFullScreen.setBackground(Color.MAGENTA.darker().darker());
+        toggleFullScreen.addActionListener(new java.awt.event.ActionListener() {
+            @Override
+            public void actionPerformed(java.awt.event.ActionEvent evt) {
+                setFullScreen(!isFullScreen());
+            }
+        });
 
         //Wraps the TextField with my custom autosuggestion box
         autoSelect = new AutoSuggestor(mangaSel, this, morEngine.getMangaList(),
@@ -304,7 +320,7 @@ public class MangaGui extends JFrame {
 
         //User Welcome Screen!
         page.setText("<html><center><p> Welcome to M.O.R!</p> "
-                + "<h1>A Java Manga Application</h1>" + instructions
+                + "<h1>Java Manga Project Created by David Huynh</h1>" + instructions
                 + "<p>Enjoy!</p></center>");
 
         //adding to User Window
@@ -402,6 +418,48 @@ public class MangaGui extends JFrame {
         Insets scnMax = Toolkit.getDefaultToolkit().getScreenInsets(getGraphicsConfiguration());
         int taskBarSize = scnMax.bottom;
         return new Dimension(screenSize.width, screenSize.height - taskBarSize);
+    }
+
+    /**
+     * Toggles full screen mode. Requires a lot of references to the JFrame.
+     */
+    public void setFullScreen(boolean fullScreen) {
+        GraphicsEnvironment env = GraphicsEnvironment.getLocalGraphicsEnvironment();
+        GraphicsDevice dev = env.getDefaultScreenDevice();//Gets the main screen
+        if (!fullScreen) {//Checks if a full screen application isn't open
+            this.dispose();//Restarts the JFrame
+            this.setVisible(false);
+            this.setResizable(true);//Re-enables resize-ability.
+            this.setUndecorated(false);//Adds title bar back
+            this.setVisible(true);//Shows restarted JFrame
+            this.pack();
+            this.setExtendedState(this.getExtendedState() | JFrame.MAXIMIZED_BOTH);//Returns to maximized state
+            this.fullScreen = false;
+        } else {
+            this.dispose();//Restarts the JFrame
+            this.setResizable(false);//Disables resizing else causes bugs
+            this.setUndecorated(true);//removes title bar
+            this.setVisible(true);//Makes it visible again
+            this.revalidate();
+            this.setSize(Toolkit.getDefaultToolkit().getScreenSize());
+            try {
+                dev.setFullScreenWindow(this);//Makes it full screen
+                if (System.getProperty("os.name").contains("Mac OS X")) {
+                    this.setVisible(false);
+                    this.setVisible(true);
+                }
+                this.repaint();
+                this.revalidate();
+            } catch (Exception e) {
+                dev.setFullScreenWindow(null);//Fall back behavior
+            }
+            this.requestFocus();
+            this.fullScreen = true;
+        }
+    }
+
+    public boolean isFullScreen() {
+        return fullScreen;
     }
 
     //Creates a combo box 

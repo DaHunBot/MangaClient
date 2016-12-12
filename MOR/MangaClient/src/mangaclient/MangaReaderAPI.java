@@ -20,10 +20,12 @@ import org.jsoup.select.Elements;
 
 /**
  * Unofficial API for MangaReader.net
+ *
  * @author David Huynh
  */
 public class MangaReaderAPI implements MorEngine {
-     //Saves Manga Url for future uses.
+    //Saves Manga Url for future uses.
+
     private String currentURL;
 
     //MangaHere API Variables
@@ -95,15 +97,10 @@ public class MangaReaderAPI implements MorEngine {
 
     @Override
     public BufferedImage getImage(String url) throws IOException {
-        if (url == null || url.equals("")) {
-            return null;
-        }
-
         Document doc = Jsoup.connect(url).timeout(5 * 1000).get();
-        Element e = doc.getElementById("image");
+        Element e = doc.getElementById("img");
         String imgUrl = e.absUrl("src");
         return ImageIO.read(new URL(imgUrl));
-
     }
 
     /**
@@ -118,11 +115,18 @@ public class MangaReaderAPI implements MorEngine {
     public String getNextPage() {
         String[] pages = this.getPageList();
         int index = StringUtil.indexOf(pages, currentURL);
-
-        if (index + 1 == pages.length) {
-            return getNextChapter();
-        } else {
+        if (index + 1 < pages.length) {
             return pages[index + 1];
+        }
+        try {
+            Document doc = Jsoup.connect(currentURL).get();
+            Element navi = doc.getElementById("navi");
+            String html = navi.getElementsByClass("next").html();//Manual Parsing Required
+            html = html.substring(html.indexOf('"') + 2, html.lastIndexOf('"'));
+            return MANGAREADER_URL + html;
+        } catch (IOException e) {
+            Logger.log(e);
+            return null;
         }
     }
 
@@ -156,22 +160,19 @@ public class MangaReaderAPI implements MorEngine {
 
     @Override
     public String getPreviousPage() {
-        Document doc;
         try {
-            doc = Jsoup.connect(currentURL).get();
-            Element e = doc.getElementsByClass("prew_page").first();
-            String backPage = e.absUrl("href");
-
-            //Special Case: Beginning of Chapter
-            if (backPage == null || backPage.equals("") || backPage.equals("javascript:void(0)")) {
-                backPage = getPreviousChapter(doc);
+            Document doc = Jsoup.connect(currentURL).get();
+            Element navi = doc.getElementById("navi");
+            String html = navi.getElementsByClass("prev").html();//Manual Parsing Required
+            if (html.contains("href=\"\"")) {//Signifies that page does not exist
+                return currentURL;
             }
-
-            return backPage;
+            html = html.substring(html.indexOf('"') + 2, html.lastIndexOf('"'));
+            return MANGAREADER_URL + html;
         } catch (IOException e) {
             Logger.log(e);
+            return null;
         }
-        return null;
     }
 
     public String getPreviousChapter() {
@@ -225,14 +226,17 @@ public class MangaReaderAPI implements MorEngine {
         return getMangaName(currentURL);
     }
 
-    //@Override
     public String getMangaName(String url) {
-        String manga = url.substring(url.lastIndexOf("/manga/") + 7);
-
-        while (manga.indexOf('/') > -1) {
-            manga = manga.substring(0, manga.indexOf('/'));
+        String name = url.replace(MANGAREADER_URL, "");
+        name = name.substring(0, name.indexOf("/"));
+        if (isMangaHash(name)) {//If it's a MangaHash, we have to parse the next / 
+            name = url.replace(MANGAREADER_URL, "");
+            name = name.substring(0, name.lastIndexOf('/'));
+            name = name.substring(name.lastIndexOf("/") + 1);
         }
-        return manga;
+        name = name.replace('-', ' ');
+        assert (!name.contains("."));
+        return name;
     }
 
     @Override
@@ -254,72 +258,42 @@ public class MangaReaderAPI implements MorEngine {
     public String getMangaURL(String mangaName) {
         String mangaURL = "";
         mangaName = StringUtil.removeTrailingWhiteSpaces(mangaName);
-
         try {
-            boolean found = false;
-            for (int i = 0; !found && i < mangaList[0].length; i++) {
+            for (int i = 0; i < mangaList[0].length; i++) {
                 String name = mangaList[0][i];
                 if (mangaName.equalsIgnoreCase(name)) {
                     mangaURL = mangaList[1][i];
-                    found = true;
+                    break;
                 }
             }
-
-            if (!found) {
-                mangaURL = searchForManga(mangaName);
-            }
-
             mangaURL = getFirstChapter(mangaURL);
+            System.out.println(mangaURL);
         } catch (IOException e) {
             Logger.log(e);
-            mangaName = StringUtil.removeTrailingWhiteSpaces(mangaName);
-            mangaURL = mangaNameToURL(mangaName);
-            mangaURL = MANGAREADER_URL + mangaURL;
         }
-
         return mangaURL;
     }
 
     /**
      * **********************************************************************************************
      */
-    private String searchForManga(String searchTerm) throws IOException {
-        String url = "http://www.mangareader.net/search";
-        String encoded = URLEncoder.encode(searchTerm, "UTF-8");
-        url += "?name=" + encoded;
-        Document doc = Jsoup.connect(url).timeout(5000).get();
-        Elements results = doc.getElementsByClass("result_search").first().children();
-        results.remove(results.last());//Removes useless link from footer
-
-        for (Element e : results) {
-            String text = e.children().last().text();
-            text = text.substring(text.indexOf(':') + 1);
-            String[] names = text.split(";");
-
-            for (String s : names) {
-                if (s.substring(1).equalsIgnoreCase(searchTerm)) {
-                    return e.select("a").first().absUrl("href");
-                }
-            }
-        }
-
-        return "";
-    }
-
     private String getFirstChapter(String mangaURL) throws IOException {
-        Document doc = Jsoup.connect(mangaURL).get();
-        Element e = doc.getElementsByClass("detail_list").last();
-        Element item = e.select("a").last();
-        return item.absUrl("href");
+        Document doc = Jsoup.connect(mangaURL).timeout(10 * 1000).get();
+        Element list = doc.getElementById("listing");
+        Elements names = list.select("a");
+        return names.first().absUrl("href");
     }
 
     @Override
     public int getCurrentPageNum() {
-        if (currentURL.charAt(currentURL.length() - 1) == '/') {
-            return 1;
+        String check = currentURL.replace(MANGAREADER_URL, "");
+        check = check.substring(0, check.indexOf('/'));
+        if (isMangaHash(check)) {//There are two types of ways of delineating Manga on the site
+            String page = check.substring(check.lastIndexOf('-') + 1);
+            return (int) Double.parseDouble(page);
         } else {
-            String page = currentURL.substring(currentURL.lastIndexOf('/') + 1, currentURL.lastIndexOf('.'));
-            return Integer.parseInt(page);
+            String number = currentURL.substring(currentURL.lastIndexOf('/'));
+            return (int) Double.parseDouble(number);
         }
     }
 
@@ -329,13 +303,26 @@ public class MangaReaderAPI implements MorEngine {
     }
 
     private double getChapNum(String url) {
-        if (!StringUtil.containsNum(url) || url.lastIndexOf('c') == -1) {
-            return -1;
+        if (url.contains("chapter")) {
+            String test = url.substring(url.lastIndexOf('-') + 1);
+            if (test.indexOf('.') != -1) {
+                test = test.substring(0, test.indexOf('.'));
+            }
+            return Double.parseDouble(test);
         }
-
-        url = url.substring(url.lastIndexOf('c'));
-        url = url.substring(1, url.indexOf('/'));
-        return Double.parseDouble(url);//Rounds to an int. Needed for v2 uploads and such.
+        if (hasMangaHash(url)) {//There are two types of ways of delineating Manga on the site
+            String chapter = url.replace(MANGAREADER_URL, "");
+            chapter = chapter.substring(0, chapter.indexOf("/"));
+            chapter = chapter.substring(chapter.indexOf('-') + 1, chapter.lastIndexOf('-'));
+            return Double.parseDouble(chapter);
+        } else {
+            String number = url.substring(0, url.lastIndexOf('/'));
+            number = number.substring(number.lastIndexOf('/') + 1);
+            if (!StringUtil.isNum(number)) {//In case it grabs the name instead
+                number = url.substring(url.lastIndexOf('/') + 1);
+            }
+            return Double.parseDouble(number);
+        }
     }
 
     public boolean isMangaLicensed(String mangaURL) throws IOException {
@@ -351,145 +338,109 @@ public class MangaReaderAPI implements MorEngine {
     }
 
     private String[][] initMangaList() throws IOException {
-        String[][] out;
-        Document doc = Jsoup.connect("http://www.mangareader.net/alphabetical").timeout(10 * 1000).maxBodySize(0).get();
-        Elements items = doc.getElementsByClass("manga_info");
-        items = MangaUtil.removeLicensedManga(items);
-        out = new String[2][items.size()];
-
-        for (int i = 0; i < items.size(); i++) {
-            Element item = items.get(i);
-            out[0][i] = item.text();
-            out[1][i] = item.absUrl("href");
+        try {
+            Document doc = Jsoup.connect("http://www.mangareader.net/alphabetical").timeout(10 * 1000)
+                    .maxBodySize(0).get();
+            Elements bigList = doc.getElementsByClass("series_alpha");
+            Elements names = new Elements();
+            for (Element miniList : bigList) {
+                names.addAll(miniList.select("li"));
+            }
+            String[][] localMangaList = new String[2][names.size()];
+            for (int i = 0; i < names.size(); i++) {
+                Element e = names.get(i).select("a").first();
+                localMangaList[0][i] = e.text().replace("[Completed]", "");
+                localMangaList[1][i] = e.absUrl("href");
+            }
+            return localMangaList;
+        } catch (IOException e) {
+            Logger.log(e);
+            return null;
         }
 
-        return out;
     }
 
     private String[] intializeChapterList() {
+        String baseURL = MANGAREADER_URL + getMangaName().replace(' ', '-');
         try {
-            String linkPage = StringUtil.urlToText(currentURL);
-            String url = "http://www.mangareader.net/get_chapters" + parseSeriesID(linkPage)
-                    + ".js?v=306";
-            String page = StringUtil.urlToText(url);
-            page = page.substring(page.indexOf("Array(") + 6);
-            page = page.substring(0, page.indexOf(");"));
-            page = page.substring(1, page.length() - 1);
-            String[] array = page.split("\\],\n  \\[");
-            String name = parseSeriesName(linkPage);
-
-            for (int i = 0; i < array.length; i++) {
-                String s = array[i];
-                s = StringUtil.stripQuotes(s);
-                s = s.substring(s.indexOf("http"));
-                s = s.replace("\"+series_name+\"", name);
-                array[i] = s;
+            List<String> outList = new ArrayList<String>();
+            Document doc = Jsoup.connect(baseURL).timeout(10 * 1000).get();
+            Element list = doc.getElementById("listing");
+            Elements names = list.select("tr");
+            names = names.select("a");
+            for (Element e : names) {
+                outList.add(e.absUrl("href"));
             }
-
-            return array;
+            String[] out = new String[outList.size()];
+            outList.toArray(out);
+            return out;
         } catch (IOException e) {
             Logger.log(e);
+            return null;
         }
-
-        return null;
     }
 
     private String[] initializeChapterNames() {
+        String baseURL = MANGAREADER_URL + getMangaName().replace(' ', '-');
         try {
-            String linkPage = StringUtil.urlToText(currentURL);
-            String url = "http://www.mangareader.net/get_chapters" + parseSeriesID(linkPage)
-                    + ".js?v=306";
-            String page = StringUtil.urlToText(url);
-            page = page.substring(page.indexOf("Array(") + 6);
-            page = page.substring(0, page.indexOf(");"));
-            page = page.substring(1, page.length() - 1);
-            String[] array = page.split("\\],\n  \\[");
-
-            for (int i = 0; i < array.length; i++) {
-                String s = array[i];
-                s = StringUtil.stripQuotes(s);
-
-                if (s.indexOf(':') != -1) {
-                    s = s.substring(0, s.indexOf(':'));
-                }
-
-                if (s.indexOf('"') != -1) {
-                    s = s.substring(0, s.indexOf('"'));
-                }
-
-                s = s.substring(s.lastIndexOf(' ') + 1);
-                s = StringUtil.formatChapterNames(s);
-                array[i] = s;
+            Document doc = Jsoup.connect(baseURL).timeout(10 * 1000).maxBodySize(0).get();
+            Element list = doc.getElementById("listing");
+            Elements names = list.select("tr");
+            names = names.select("a");
+            String[] out = new String[names.size()];
+            for (int i = 0; i < out.length; i++) {
+                out[i] = names.get(i).text();
             }
-
-            return array;
+            out = StringUtil.formatChapterNames(out);
+            return out;
         } catch (IOException e) {
             Logger.log(e);
+            return null;
         }
-
-        return null;
     }
 
     private String[] initalizePageList() {
-        List<String> pages = new ArrayList<>();
-
         try {
-            Document doc = Jsoup.connect(currentURL).get();
-            Element list = doc.getElementsByClass("wid60").first();
-
-            for (Element item : list.children()) {
-                pages.add(item.attr("value"));
+            Document doc = Jsoup.connect(currentURL).timeout(10 * 1000).get();
+            Elements items = doc.getElementById("pageMenu").children();
+            String[] out = new String[items.size()];
+            for (int i = 0; i < items.size(); i++) {
+                out[i] = items.get(i).absUrl("value");
             }
+            return out;
         } catch (IOException e) {
             Logger.log(e);
         }
-
-        String[] out = new String[pages.size()];
-        pages.toArray(out);
-        return out;
+        return null;
     }
 
     /**
      * **********************************************************************************************
      */
-    private String parseSeriesName(String page) {
-        page = page.substring(page.indexOf("series_name = \"") + 15);
-        page = page.substring(0, page.indexOf('"'));
-        return page;
-    }
-
-    private String parseSeriesID(String page) {
-        page = page.substring(page.indexOf("series_id") + 10);
-        page = page.substring(0, page.indexOf('&'));
-        return page;
-    }
-
-    private String mangaNameToURL(String name) {
-        name = name.toLowerCase();
-
-        while (name.charAt(name.length() - 1) == ' ') {
-            //Removes trailing whitespaces
-            name = name.substring(0, name.length() - 1);
-        }
-
-        name = name.replace('@', 'a');//Special Case
-        name = name.replace("& ", "");//Special Case
-        name = name.replace(' ', '_');
-        name = name.replace(",", "");
-
-        for (int i = 0; i < name.length(); i++) {
-            char x = name.charAt(i);
-
-            if (!Character.isLetter(x) && x != '_' && !Character.isDigit(x)) {
-                if (i - 1 >= 0 && i + 1 >= name.length() && name.charAt(i - 1) == '_' && name.charAt(i + 1) == '_') {
-                    name = name.replace("" + x, "");
-                } else {
-                    name = name.replace(x, '_');
-                }
+    /**
+     * Checks if it's uses a manga hash to store data about the manga.
+     *
+     * @param input The String you want to check
+     * @return True if it is, false otherwise
+     */
+    private boolean isMangaHash(String input) {
+        for (char c : input.toCharArray()) {
+            if (!(Character.isDigit(c) || c == '-')) {
+                return false;
             }
-
         }
-        return name;
+        return input.contains("-"); // In case it got the chapter number at the end
+    }
+
+    private boolean hasMangaHash(String URL) {
+        String end = URL.replace(MANGAREADER_URL, "");
+        String[] pieces = end.split("/");
+        for (String s : pieces) {
+            if (isMangaHash(s)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /**
